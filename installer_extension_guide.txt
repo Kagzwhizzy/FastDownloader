@@ -1,0 +1,27 @@
+Add the FastDownloader button to your browser (1 minute)
+=======================================================
+
+Chrome / Brave / Edge:
+
+ 1. Open a new tab and go to:
+       Chrome:  chrome://extensions
+       Brave:   brave://extensions
+       Edge:    edge://extensions
+
+ 2. Turn ON "Developer mode" (switch in the top-right corner; in Edge it's on the left).
+
+ 3. Click "Load unpacked".
+
+ 4. Choose the folder:  Browser Extension
+    It is inside the FastDownloader install folder
+    (Start menu -> FastDownloader -> "Browser Extension folder" opens it).
+    Click the folder once, then "Select Folder".
+
+ 5. Click the puzzle-piece icon in the toolbar and pin FastDownloader.
+
+Done! Now:
+ - Play any video -> click the blue "Download" button on the video -> pick 4K / 1080p / 720p / MP3.
+ - Normal downloads (exe, zip, pdf ...) go to FastDownloader automatically.
+ - Tip: you can also just COPY a video link - FastDownloader shows the quality picker by itself.
+
+Keep FastDownloader running (it sits in the tray, bottom-right) for the browser button to work.

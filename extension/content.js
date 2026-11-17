@@ -2,6 +2,7 @@
 (() => {
   if (window.__fastdl) return;
   window.__fastdl = true;
+  if (self.fdlBlocked && self.fdlBlocked(location.href)) return;   // edition rules
 
   const host = document.createElement("div");
   host.style.cssText = "all:initial;position:fixed;z-index:2147483647;top:0;left:0;display:none;";

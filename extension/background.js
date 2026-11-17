@@ -1,4 +1,5 @@
 // Talks to the FastDownloader app on this PC (127.0.0.1 only).
+importScripts("edition.js");
 const API = "http://127.0.0.1:47321";
 
 async function api(path, body) {
@@ -36,6 +37,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (info.menuItemId === "fdl-link") {
       await api("/download", { url: info.linkUrl, referrer: info.pageUrl, cookie: await cookieHeader(info.linkUrl), ua: navigator.userAgent });
     } else if (info.menuItemId === "fdl-video") {
+      if (fdlBlocked(info.frameUrl || info.pageUrl)) return;
       const direct = info.srcUrl && /^https?:/i.test(info.srcUrl) ? info.srcUrl : null;
       await api("/video", { pageUrl: info.frameUrl || info.pageUrl, referrer: info.pageUrl, direct, title: tab ? tab.title : "" });
     }
@@ -87,6 +89,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   (async () => {
     try {
       if (msg.type === "video") {
+        if (fdlBlocked(msg.pageUrl)) { reply({ ok: false, blocked: true }); return; }
         await api("/video", { pageUrl: msg.pageUrl, referrer: msg.referrer, direct: msg.direct, title: msg.title });
         reply({ ok: true });
       } else if (msg.type === "status") {

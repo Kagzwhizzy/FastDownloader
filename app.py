@@ -1,4 +1,4 @@
-﻿"""FastDownloader - IDM-style download manager (files + videos)."""
+"""FastDownloader - IDM-style download manager (files + videos)."""
 import json
 import os
 import subprocess
@@ -19,7 +19,7 @@ from fastdl import bridge, config, engine, video
 from fastdl.engine import human_size, human_time
 
 STATUS_TEXT = {
-    "queued": "Queued", "downloading": "Downloading", "processing": "Finishingâ€¦",
+    "queued": "Queued", "downloading": "Downloading", "processing": "Finishing…",
     "paused": "Paused", "done": "Complete", "error": "Error",
 }
 
@@ -78,7 +78,7 @@ class Worker(QObject):
 def folder_row(parent, folder):
     row = QHBoxLayout()
     edit = QLineEdit(folder)
-    btn = QPushButton("Browseâ€¦")
+    btn = QPushButton("Browse…")
 
     def pick():
         d = QFileDialog.getExistingDirectory(parent, "Save to", edit.text())
@@ -109,14 +109,14 @@ class QualityDialog(QDialog):
         self.setMinimumWidth(460)
 
         lay = QVBoxLayout(self)
-        head = QLabel("â¬‡  Download this video")
+        head = QLabel("Download this video")
         head.setStyleSheet("font-size:17px; font-weight:700; color:#5b3fe0;")
         lay.addWidget(head)
         self.title_lbl = QLabel(title or page_url)
         self.title_lbl.setWordWrap(True)
         self.title_lbl.setStyleSheet("font-size:13px; font-weight:600; color:#222;")
         lay.addWidget(self.title_lbl)
-        self.status = QLabel("Finding available qualitiesâ€¦")
+        self.status = QLabel("Finding available qualities…")
         self.status.setStyleSheet("color:#666;")
         lay.addWidget(self.status)
 
@@ -163,7 +163,7 @@ class QualityDialog(QDialog):
         auds = [o for o in info["options"] if o["audio_only"]]
         for i, opt in enumerate(vids + auds):
             size = f"   ~{human_size(opt['size'])}" if opt.get("size") else ""
-            icon = "ðŸŽµ " if opt["audio_only"] else "ðŸŽ¬ "
+            icon = "🎵 " if opt["audio_only"] else "🎬 "
             btn = QPushButton(f"{icon}{opt['label']}{size}")
             btn.setObjectName("quality")
             btn.setCursor(Qt.PointingHandCursor)
@@ -215,18 +215,18 @@ class FileDialog(QDialog):
         self.setMinimumWidth(520)
 
         lay = QVBoxLayout(self)
-        head = QLabel("â¬‡  Download file")
+        head = QLabel("Download file")
         head.setStyleSheet("font-size:17px; font-weight:700; color:#5b3fe0;")
         lay.addWidget(head)
         form = QFormLayout()
-        url_lbl = QLabel(url if len(url) < 90 else url[:87] + "â€¦")
+        url_lbl = QLabel(url if len(url) < 90 else url[:87] + "…")
         url_lbl.setToolTip(url)
         url_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         form.addRow("Address:", url_lbl)
         self.name = QLineEdit(filename or "")
-        self.name.setPlaceholderText("checkingâ€¦")
+        self.name.setPlaceholderText("checking…")
         form.addRow("File name:", self.name)
-        self.size = QLabel("checkingâ€¦")
+        self.size = QLabel("checking…")
         form.addRow("Size:", self.size)
         row, self.folder = folder_row(self, main.settings["download_dir"])
         form.addRow("Save to:", row)
@@ -261,9 +261,9 @@ class FileDialog(QDialog):
             self.name.setText(info["filename"])
         txt = human_size(info["total"]) or "unknown"
         if info["resumable"]:
-            txt += "   Â·   resume supported, fast multi-part download"
+            txt += "   ·   resume supported, fast multi-part download"
         else:
-            txt += "   Â·   server does not allow resume (single connection)"
+            txt += "   ·   server does not allow resume (single connection)"
         self.size.setText(txt)
 
     def _start(self):
@@ -335,7 +335,7 @@ class SupportDialog(QDialog):
         self.setWindowTitle("Support FastDownloader")
         self.setMinimumWidth(500)
         lay = QVBoxLayout(self)
-        head = QLabel("ðŸŽ‰  Enjoying FastDownloader?" if thanks else "â¤  Support FastDownloader")
+        head = QLabel("🎉  Enjoying FastDownloader?" if thanks else "❤  Support FastDownloader")
         head.setStyleSheet("font-size:17px; font-weight:700; color:#5b3fe0;")
         lay.addWidget(head)
         msg = QLabel(("You've finished several downloads with FastDownloader. " if thanks else "")
@@ -362,7 +362,7 @@ class SupportDialog(QDialog):
         row.addWidget(qr)
         info = QVBoxLayout()
         info.addWidget(QLabel("Coin: <b>USDT</b>"))
-        nets = "".join(f"â€¢ <b>{n}</b><br><span style='color:#666'>{d}</span><br>"
+        nets = "".join(f"• <b>{n}</b><br><span style='color:#666'>{d}</span><br>"
                        for n, d in config.USDT_NETWORKS)
         nl = QLabel("Network (use one of these):<br>" + nets)
         nl.setTextFormat(Qt.RichText)
@@ -384,7 +384,7 @@ class SupportDialog(QDialog):
 
         def do_copy():
             QApplication.clipboard().setText(config.USDT_ADDRESS)
-            copy.setText("Copied âœ“")
+            copy.setText("Copied ✓")
             QTimer.singleShot(2000, lambda: copy.setText("Copy"))
         copy.clicked.connect(do_copy)
         arow.addWidget(addr, 1)
@@ -418,6 +418,9 @@ class SettingsDialog(QDialog):
         self.autostart = QCheckBox("Start FastDownloader when Windows starts (needed for the browser button)")
         self.autostart.setChecked(main.settings.get("start_with_windows", False))
         lay.addRow(self.autostart)
+        self.clip = QCheckBox("When I copy a video link (YouTube, TikTok, Facebook …), show the quality picker")
+        self.clip.setChecked(main.settings.get("watch_clipboard", True))
+        lay.addRow(self.clip)
         b = QHBoxLayout()
         b.addStretch(1)
         ok = QPushButton("Save")
@@ -467,14 +470,11 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         act("Open folder", QStyle.SP_DirOpenIcon, lambda: os.startfile(self._ensure_dir()))
         act("Settings", QStyle.SP_FileDialogDetailedView, self.open_settings)
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        tb.addWidget(spacer)
-        donate = QPushButton("â¤  Support (PayPal / USDT)")
+        # Support button lives in the bottom-right corner so it always fits, even on small screens
+        donate = QPushButton("❤  Support (PayPal / USDT)")
         donate.setObjectName("donate")
         donate.setCursor(Qt.PointingHandCursor)
         donate.clicked.connect(lambda: self.open_support())
-        tb.addWidget(donate)
 
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
@@ -492,6 +492,8 @@ class MainWindow(QMainWindow):
         self.table.customContextMenuRequested.connect(self.row_menu)
         self.table.cellDoubleClicked.connect(self.double_click)
         self.setCentralWidget(self.table)
+        self.statusBar().addPermanentWidget(donate)
+        self.statusBar().setStyleSheet("QStatusBar { padding: 4px 8px; }")
         self.statusBar().showMessage("Ready")
 
         # tray icon so the app keeps running for the browser extension
@@ -510,6 +512,12 @@ class MainWindow(QMainWindow):
         self._tray_hint_shown = False
 
         self.load_tasks()
+
+        # copy a video link anywhere -> quality picker pops up (works without the browser extension)
+        self._last_clip = QApplication.clipboard().text().strip()
+        self._clip_worker = Worker()
+        self._clip_worker.finished.connect(self._clip_checked)
+        QApplication.clipboard().dataChanged.connect(self.on_clipboard)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(500)
@@ -636,9 +644,29 @@ class MainWindow(QMainWindow):
         total_speed = sum(t.speed for t in self.tasks if t.active)
         n = sum(1 for t in self.tasks if t.active)
         if n:
-            self.statusBar().showMessage(f"{n} downloading  Â·  {human_size(total_speed) or '0 B'}/s")
+            self.statusBar().showMessage(f"{n} downloading  ·  {human_size(total_speed) or '0 B'}/s")
         elif any_active is False and self.statusBar().currentMessage().endswith("/s"):
             self.statusBar().showMessage("Ready")
+
+    def on_clipboard(self):
+        if not self.settings.get("watch_clipboard", True):
+            return
+        text = QApplication.clipboard().text().strip()
+        if not text or text == self._last_clip:
+            return
+        self._last_clip = text
+        if not text.startswith(("http://", "https://")) or any(c.isspace() for c in text) or len(text) > 2000:
+            return
+        if any(getattr(p, "page_url", None) == text for p in self.popups):
+            return
+        self._clip_worker.run(lambda u: (u, video.is_video_site(u)), text)
+
+    def _clip_checked(self, result, err):
+        if err is not None or not result:
+            return
+        url, is_video = result
+        if is_video and url == self._last_clip:
+            self.open_video_dialog(url)
 
     def _count_completed(self):
         """Polite thank-you prompt: after the 3rd finished download, then every 20th (can be turned off)."""
@@ -668,7 +696,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction("Resume", lambda: [x.start() for x in tasks])
         m.addAction("Pause", lambda: [x.pause() for x in tasks])
-        m.addAction("Copy link", lambda: QApplication.clipboard().setText(t.url))
+        m.addAction("Copy link", lambda: (setattr(self, "_last_clip", t.url), QApplication.clipboard().setText(t.url)))
         if t.status == "error" and t.error:
             m.addAction("Show error", lambda: QMessageBox.warning(self, "Error", t.error))
         m.addSeparator()
@@ -730,6 +758,7 @@ class MainWindow(QMainWindow):
         self.settings["download_dir"] = d.folder.text().strip() or config.DEFAULTS["download_dir"]
         self.settings["connections"] = d.conn.value()
         self.settings["start_with_windows"] = d.autostart.isChecked()
+        self.settings["watch_clipboard"] = d.clip.isChecked()
         config.save_settings(self.settings)
         set_autostart(self.settings["start_with_windows"])
 
@@ -755,7 +784,7 @@ class MainWindow(QMainWindow):
         self.hide()
         if not self._tray_hint_shown:
             self.tray.showMessage(config.APP_NAME, "Still running in the tray so the browser button keeps working. "
-                                  "Right-click the tray icon â†’ Quit to close.", QSystemTrayIcon.Information, 4000)
+                                  "Right-click the tray icon → Quit to close.", QSystemTrayIcon.Information, 4000)
             self._tray_hint_shown = True
 
     def quit_app(self):

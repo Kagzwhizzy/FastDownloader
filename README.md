@@ -13,6 +13,11 @@
   <a href="../../releases/latest"><b>⬇ Download the latest version</b></a>
 </p>
 
+<p align="center">
+  <img src="docs/2-quality-picker.png" width="49%" alt="Quality picker">
+  <img src="docs/1-download-list.png" width="49%" alt="Download list">
+</p>
+
 ---
 
 ## Features
@@ -21,6 +26,7 @@
 - **Pause & resume** – even after closing the app or restarting your PC.
 - **Video downloads** – YouTube and 1,800+ other sites. A popup shows only the qualities the video really has
   (4K, 2K, 1080p, 720p, 480p …) with file sizes, plus **Audio only (MP3)**.
+- **Copy a link → pick a quality** – copy any video link and the quality picker pops up by itself.
 - **Browser button** – a *Download* button appears on top of videos in Chrome, Brave and Edge.
 - **Catches browser downloads** – exe, zip, rar, iso, apk, pdf, mp4, mp3 … all go to FastDownloader automatically.
   If a link can only be downloaded by the browser, the browser keeps it – nothing gets lost.
@@ -29,14 +35,15 @@
 
 ## Install
 
-1. Download **FastDownloader-1.0-Windows.zip** from [Releases](../../releases/latest) and unzip it.
-2. Run **FastDownloader.exe**.
+1. Download **FastDownloader_Setup_1.1.0.exe** from [Releases](../../releases/latest) and run it
+   (or take the portable **FastDownloader-1.1-Windows.zip** – no install needed).
    Windows may say *"Windows protected your PC"* – click **More info → Run anyway** (the app is new and not yet code-signed).
-3. Add the browser button:
+2. Add the browser button:
    - open `chrome://extensions` (Brave: `brave://extensions`, Edge: `edge://extensions`)
    - turn on **Developer mode**
-   - click **Load unpacked** and choose the **Browser Extension** folder from the zip
-4. Play any video and click **Download** on it.
+   - click **Load unpacked** and choose the **Browser Extension** folder
+     (Start menu → FastDownloader → *Browser Extension folder*)
+3. Play any video and click **Download** on it – or just copy a video link.
 
 > DRM-protected streaming services (Netflix, Prime Video, Disney+ …) cannot be downloaded.
 > Please only download content you have the right to download.

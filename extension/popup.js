@@ -31,8 +31,14 @@ $("vid").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   chrome.runtime.sendMessage({ type: "video", pageUrl: tab.url, referrer: tab.url, title: tab.title }, res => {
     if (res && res.ok) toast("✓ Choose your quality in the FastDownloader window");
+    else if (res && res.blocked) toast("Video download isn't available on this site", true);
     else toast("Couldn't reach the app – is FastDownloader open?", true);
   });
+});
+
+// hide the video button on sites this edition doesn't support
+chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+  if (tab && tab.url && self.fdlBlocked && self.fdlBlocked(tab.url)) $("vid").style.display = "none";
 });
 
 // ---- support --------------------------------------------------------

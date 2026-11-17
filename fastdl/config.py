@@ -4,7 +4,7 @@ import os
 import sys
 
 APP_NAME = "FastDownloader"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # Local port the Chrome extension talks to (127.0.0.1 only, never the internet).
 PORT = 47321
