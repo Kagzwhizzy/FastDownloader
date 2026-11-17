@@ -17,6 +17,10 @@
   <img src="docs/2-quality-picker.png" width="49%" alt="Quality picker">
   <img src="docs/1-download-list.png" width="49%" alt="Download list">
 </p>
+<p align="center">
+  <img src="docs/5-playlist-dark.png" width="40%" alt="Playlist download (dark mode)">
+  <img src="docs/6-scheduler-dark.png" width="40%" alt="Scheduler (dark mode)">
+</p>
 
 ---
 
@@ -27,6 +31,12 @@
 - **Video downloads** – YouTube and 1,800+ other sites. A popup shows only the qualities the video really has
   (4K, 2K, 1080p, 720p, 480p …) with file sizes, plus **Audio only (MP3)**.
 - **Copy a link → pick a quality** – copy any video link and the quality picker pops up by itself.
+- **Whole playlists & channels** – one click downloads every video at the quality you choose, in its own folder.
+- **Subtitles** – save subtitles (.srt) in any available language next to the video.
+- **Queue, speed limit & scheduler** – choose how many downloads run at once, cap the speed so browsing
+  stays fast, start downloads at night and sleep / shut down the PC when everything is finished.
+- **Auto folders** – files are sorted into Videos, Music, Programs, Compressed, Documents and Pictures.
+- **Dark mode** and **automatic updates**.
 - **Browser button** – a *Download* button appears on top of videos in Chrome, Brave and Edge.
 - **Catches browser downloads** – exe, zip, rar, iso, apk, pdf, mp4, mp3 … all go to FastDownloader automatically.
   If a link can only be downloaded by the browser, the browser keeps it – nothing gets lost.
@@ -35,8 +45,9 @@
 
 ## Install
 
-1. Download **FastDownloader_Setup_1.1.0.exe** from [Releases](../../releases/latest) and run it
-   (or take the portable **FastDownloader-1.1-Windows.zip** – no install needed).
+1. Download **FastDownloader_Setup_1.2.0.exe** from [Releases](../../releases/latest) and run it
+   (or take the portable **FastDownloader-1.2-Windows.zip** – no install needed).
+   The installed version updates itself when a new version comes out.
    Windows may say *"Windows protected your PC"* – click **More info → Run anyway** (the app is new and not yet code-signed).
 2. Add the browser button:
    - open `chrome://extensions` (Brave: `brave://extensions`, Edge: `edge://extensions`)

@@ -19,6 +19,59 @@ class StopDownload(Exception):
     pass
 
 
+class RateLimiter:
+    """One speed limit shared by all downloads (token bucket). rate = bytes/second, 0 = unlimited."""
+
+    def __init__(self):
+        self.rate = 0
+        self._allow = 0.0
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+
+    def set_rate(self, bps):
+        with self._lock:
+            self.rate = max(0, int(bps or 0))
+            self._allow = 0.0
+            self._last = time.monotonic()
+
+    def consume(self, n, stop=None):
+        if self.rate <= 0 or n <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            self._allow = min(self.rate * 0.5, self._allow + (now - self._last) * self.rate)
+            self._last = now
+            self._allow -= n
+            wait = -self._allow / self.rate if self._allow < 0 else 0
+        while wait > 0:
+            if stop is not None and stop.is_set():
+                return
+            step = min(wait, 0.1)
+            time.sleep(step)
+            wait -= step
+
+
+LIMITER = RateLimiter()
+
+# IDM-style automatic folders
+CATEGORIES = {
+    "Videos": {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "3gp", "mpg", "mpeg", "ts"},
+    "Music": {"mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "wma"},
+    "Programs": {"exe", "msi", "apk", "xapk", "dmg", "appx", "msix", "deb", "rpm", "bat"},
+    "Compressed": {"zip", "rar", "7z", "tar", "gz", "bz2", "xz", "iso", "img", "cab"},
+    "Documents": {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "odt", "epub", "csv"},
+    "Pictures": {"jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic"},
+}
+
+
+def category_for(filename):
+    ext = os.path.splitext(filename or "")[1].lower().lstrip(".")
+    for cat, exts in CATEGORIES.items():
+        if ext in exts:
+            return cat
+    return "Other"
+
+
 def human_size(n):
     if n is None or n <= 0:
         return ""
@@ -200,7 +253,8 @@ class BaseTask:
     def to_dict(self):
         return {
             "kind": self.kind, "id": self.id, "url": self.url, "folder": self.folder,
-            "filename": self.filename, "status": "paused" if self.status in ("downloading", "processing") else self.status,
+            "filename": self.filename,
+            "status": "paused" if self.status in ("downloading", "processing") else self.status,
             "total": self.total, "done": self.done, "error": self.error, "created": self.created,
             "headers": self.headers, "was_active": self.active, **self.extra(),
         }
@@ -347,6 +401,7 @@ class HttpTask(BaseTask):
                             f.write(chunk)
                             remaining -= len(chunk)
                             self._add(len(chunk))
+                            LIMITER.consume(len(chunk), self._stop)
                             if remaining <= 0:
                                 break
                 if os.path.getsize(path) >= need:
@@ -380,6 +435,7 @@ class HttpTask(BaseTask):
                     if chunk:
                         f.write(chunk)
                         self._add(len(chunk))
+                        LIMITER.consume(len(chunk), self._stop)
         final = self.path
         if os.path.exists(final):
             final = unique_path(self.folder, self.filename)
@@ -394,7 +450,7 @@ class VideoTask(BaseTask):
     kind = "video"
 
     def __init__(self, url, folder, format_spec="bv*+ba/b", label="best", audio_only=False,
-                 title="", expected_total=None, partials=None, **kw):
+                 title="", expected_total=None, partials=None, subs=None, sub_note="", **kw):
         super().__init__(url, folder, **kw)
         self.format_spec = format_spec
         self.label = label
@@ -402,12 +458,15 @@ class VideoTask(BaseTask):
         self.title = title
         self.expected_total = expected_total
         self.partials = partials or []
+        self.subs = subs or []          # subtitle languages, e.g. ["en"]
+        self.sub_note = sub_note
         if not self.filename and title:
             self.filename = f"{safe_name(title)} [{label}]"   # display name until the real one is known
 
     def extra(self):
         return {"format_spec": self.format_spec, "label": self.label, "audio_only": self.audio_only,
-                "title": self.title, "expected_total": self.expected_total, "partials": self.partials}
+                "title": self.title, "expected_total": self.expected_total, "partials": self.partials,
+                "subs": self.subs, "sub_note": self.sub_note}
 
     def temp_files(self):
         out = []
@@ -420,12 +479,17 @@ class VideoTask(BaseTask):
         from . import video
 
         base = {"n": 0}
+        last = {"b": 0}
         if self.expected_total:
             self.total = self.expected_total
 
         def hook(d):
             if self._stop.is_set():
                 raise StopDownload()
+            got = d.get("downloaded_bytes") or 0
+            if got > last["b"]:
+                LIMITER.consume(got - last["b"], self._stop)
+            last["b"] = got if d["status"] == "downloading" else 0
             tmp = d.get("tmpfilename") or d.get("filename")
             if tmp and tmp.endswith(".part"):
                 tmp = tmp[:-5]
@@ -464,8 +528,20 @@ class VideoTask(BaseTask):
                                        "preferredquality": "192"}]
         else:
             opts["merge_output_format"] = "mp4"
-        with YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(self.url, download=True)
+        # YouTube sometimes answers 403 for a moment; fresh links on a new try usually work
+        for attempt in range(3):
+            try:
+                with YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(self.url, download=True)
+                break
+            except Exception as e:  # noqa: BLE001
+                if self._stop.is_set() or attempt == 2 or not any(
+                        s in str(e) for s in ("403", "Forbidden", "timed out", "Connection reset", "IncompleteRead")):
+                    raise
+                for _ in range(30 * (attempt + 1)):
+                    if self._stop.is_set():
+                        raise StopDownload()
+                    time.sleep(0.1)
         if self._stop.is_set():
             raise StopDownload()
         if info and info.get("_type") == "playlist" and info.get("entries"):
@@ -477,7 +553,31 @@ class VideoTask(BaseTask):
             self.folder = os.path.dirname(path)
             self.filename = os.path.basename(path)
             self.total = self.done = os.path.getsize(path)
+        if self.subs and path:
+            self._download_subs(name)
         self.status = "done"
+
+    def _download_subs(self, name):
+        """Subtitles in a separate pass, so a subtitle problem never ruins the video download."""
+        from yt_dlp import YoutubeDL
+        from . import video
+        self.status = "processing"
+        opts = video.base_opts(self.headers.get("Referer"))
+        opts.update({
+            "skip_download": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": list(self.subs),
+            "subtitlesformat": "srt/vtt/best",
+            "outtmpl": os.path.join(self.folder, name),
+            "postprocessors": [{"key": "FFmpegSubtitlesConvertor", "format": "srt"}],
+        })
+        try:
+            with YoutubeDL(opts) as ydl:
+                ydl.extract_info(self.url, download=True)
+            self.sub_note = "subtitles saved"
+        except Exception as e:  # noqa: BLE001
+            self.sub_note = "subtitles not available: " + str(e).replace("ERROR: ", "")[:120]
 
 
 def task_from_dict(d):

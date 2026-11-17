@@ -16,7 +16,7 @@ app = QApplication(sys.argv)
 import app as fd  # noqa: E402
 from fastdl import engine  # noqa: E402
 
-app.setStyleSheet(fd.STYLE)
+fd.apply_theme(app, os.environ.get("FDL_THEME", "light"))
 app.setFont(QFont("Segoe UI", 10))
 
 

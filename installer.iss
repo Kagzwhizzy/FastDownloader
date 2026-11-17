@@ -1,6 +1,6 @@
 ; FastDownloader installer (Inno Setup 6)
 #define AppName "FastDownloader"
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #define AppExe "FastDownloader.exe"
 
 [Setup]
@@ -53,6 +53,14 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch FastDownloader now"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\How to add the browser button.txt"; Description: "Show how to add the browser button"; Flags: postinstall shellexec skipifsilent
+; auto-update: the app runs the installer with /SILENT /relaunch=1 -> reopen the app afterwards
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: ShouldRelaunch
+
+[Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/im {#AppExe} /f"; Flags: runhidden; RunOnceId: "KillApp"

@@ -1,53 +1,136 @@
 """FastDownloader - IDM-style download manager (files + videos)."""
 import json
 import os
+import string
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QIcon
+from PySide6.QtCore import QObject, Qt, QTime, QTimer, Signal
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QDialog, QFileDialog, QFormLayout, QFrame, QGridLayout,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar,
-    QPushButton, QSizePolicy, QSpinBox, QStyle, QSystemTrayIcon, QTableWidget, QTableWidgetItem, QToolBar,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
+    QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar,
+    QProgressDialog, QPushButton, QSpinBox, QStyle, QSystemTrayIcon, QTableWidget, QTableWidgetItem,
+    QTextBrowser, QTimeEdit, QToolBar, QVBoxLayout, QWidget,
 )
 
-from fastdl import bridge, config, engine, video
+from fastdl import bridge, config, engine, updater, video
 from fastdl.engine import human_size, human_time
 
 STATUS_TEXT = {
-    "queued": "Queued", "downloading": "Downloading", "processing": "Finishing…",
+    "queued": "Queued", "scheduled": "Scheduled", "downloading": "Downloading", "processing": "Finishing…",
     "paused": "Paused", "done": "Complete", "error": "Error",
 }
 
-STYLE = """
-QMainWindow, QDialog { background: #f6f7fb; }
-QToolBar { background: #ffffff; border-bottom: 1px solid #dde1ea; spacing: 6px; padding: 6px; }
-QToolButton { padding: 6px 10px; border-radius: 6px; font-size: 13px; }
-QToolButton:hover { background: #e8eefc; }
-QTableWidget { background: #ffffff; border: none; gridline-color: #eef0f5; font-size: 13px;
-               selection-background-color: #dce7ff; selection-color: #111; }
-QHeaderView::section { background: #f0f2f7; border: none; border-bottom: 1px solid #dde1ea;
-                       padding: 6px; font-weight: 600; color: #444; }
-QProgressBar { border: 1px solid #cfd6e4; border-radius: 4px; background: #eef1f7; text-align: center;
-               height: 16px; font-size: 11px; }
+SPEEDS = [("Unlimited", 0), ("100 KB/s", 100 * 1024), ("250 KB/s", 250 * 1024), ("500 KB/s", 500 * 1024),
+          ("1 MB/s", 1 << 20), ("2 MB/s", 2 << 20), ("5 MB/s", 5 << 20), ("10 MB/s", 10 << 20)]
+
+SUB_LANGS = [("en", "English"), ("es", "Spanish"), ("fr", "French"), ("de", "German"), ("pt", "Portuguese"),
+             ("ar", "Arabic"), ("hi", "Hindi"), ("sw", "Swahili"), ("zh-Hans", "Chinese"), ("ru", "Russian")]
+
+# ---------------------------------------------------------------------------
+# Themes (light / dark)
+# ---------------------------------------------------------------------------
+PALETTES = {
+    "light": dict(bg="#f6f7fb", card="#ffffff", text="#151826", muted="#6b7185", line="#dde1ea",
+                  head="#f0f2f7", sel="#e6e0ff", input="#ffffff", inputline="#c9d1e1", hover="#f1efff",
+                  accent="#5b3fe0", error="#b3261e", ok="#15803d", trough="#eef1f7", scroll="#c9cedb"),
+    "dark": dict(bg="#12141c", card="#1a1d28", text="#e9ebf3", muted="#9aa1b5", line="#2a2e3d",
+                 head="#202433", sel="#3b3370", input="#202433", inputline="#343a4f", hover="#2a2550",
+                 accent="#a78bfa", error="#f87171", ok="#4ade80", trough="#262a38", scroll="#3a4054"),
+}
+P = dict(PALETTES["light"])
+
+STYLE_TEMPLATE = string.Template("""
+QWidget { color: $text; }
+QMainWindow, QDialog { background: $bg; }
+QToolBar { background: $card; border-bottom: 1px solid $line; spacing: 4px; padding: 6px; }
+QToolButton { padding: 6px 9px; border-radius: 6px; font-size: 13px; color: $text; }
+QToolButton:hover { background: $hover; }
+QStatusBar { background: $card; border-top: 1px solid $line; padding: 4px 8px; }
+QStatusBar QLabel { color: $muted; }
+QTableWidget { background: $card; border: none; gridline-color: $line; font-size: 13px;
+               selection-background-color: $sel; selection-color: $text; }
+QHeaderView::section { background: $head; border: none; border-bottom: 1px solid $line;
+                       padding: 6px; font-weight: 600; color: $muted; }
+QProgressBar { border: 1px solid $line; border-radius: 4px; background: $trough; text-align: center;
+               height: 16px; font-size: 11px; color: $text; }
 QProgressBar::chunk { border-radius: 3px;
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7c3aed, stop:1 #2563eb); }
-QPushButton { padding: 7px 14px; border-radius: 8px; border: 1px solid #d5d9e6; background: #fff; }
-QPushButton:hover { background: #f1efff; border-color: #b9b0f5; }
+QPushButton { padding: 7px 14px; border-radius: 8px; border: 1px solid $inputline; background: $card; color: $text; }
+QPushButton:hover { background: $hover; border-color: #8b7cf0; }
+QPushButton:disabled { color: $muted; }
 QPushButton#primary { color: white; border: none; font-weight: 600;
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #7c3aed, stop:1 #2563eb); }
 QPushButton#primary:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6d28d9, stop:1 #1d4ed8); }
 QPushButton#quality { text-align: left; padding: 9px 12px; font-size: 13px; border-radius: 10px; }
 QPushButton#quality:hover { color: white; border: none;
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #7c3aed, stop:1 #2563eb); }
-QPushButton#donate { background: #ffc439; border: none; font-weight: 700; color: #142c8e; border-radius: 16px; padding: 7px 16px; }
+QPushButton#donate { background: #ffc439; border: none; font-weight: 700; color: #142c8e; border-radius: 15px; padding: 6px 16px; }
 QPushButton#donate:hover { background: #f2b52a; }
-QLineEdit, QSpinBox { padding: 6px; border: 1px solid #c9d1e1; border-radius: 6px; background: #fff; }
-"""
+QPushButton#update { background: #16a34a; border: none; font-weight: 700; color: white; border-radius: 15px; padding: 6px 14px; }
+QLineEdit, QSpinBox, QComboBox, QTimeEdit { padding: 5px 6px; border: 1px solid $inputline; border-radius: 6px;
+    background: $input; color: $text; selection-background-color: #7c3aed; }
+QComboBox QAbstractItemView { background: $card; color: $text; selection-background-color: $sel; border: 1px solid $line; }
+QMenu { background: $card; color: $text; border: 1px solid $line; padding: 4px; }
+QMenu::item { padding: 6px 18px; border-radius: 4px; }
+QMenu::item:selected { background: $sel; }
+QMenu::separator { height: 1px; background: $line; margin: 4px 6px; }
+QTextBrowser { background: $card; border: 1px solid $line; border-radius: 8px; padding: 6px; }
+QToolTip { background: $card; color: $text; border: 1px solid $line; padding: 4px; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: $scroll; border-radius: 5px; min-height: 30px; }
+QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
+QScrollBar:horizontal { background: transparent; height: 10px; }
+QScrollBar::handle:horizontal { background: $scroll; border-radius: 5px; min-width: 30px; }
+QLabel#heading { font-size: 17px; font-weight: 700; color: $accent; }
+QLabel#title { font-size: 13px; font-weight: 600; }
+QLabel#muted { color: $muted; }
+QLabel#error { color: $error; }
+QLabel#ok { color: $ok; }
+QFrame#sep { background: $line; max-height: 1px; min-height: 1px; border: none; }
+""")
+
+
+def system_dark():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
+    except OSError:
+        return False
+
+
+def apply_theme(app, setting):
+    dark = system_dark() if setting == "system" else setting == "dark"
+    P.clear()
+    P.update(PALETTES["dark" if dark else "light"])
+    app.setStyleSheet(STYLE_TEMPLATE.substitute(P))
+
+
+def set_role(widget, name):
+    """Change a label's style role (heading/muted/error/ok) and refresh its look."""
+    widget.setObjectName(name)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
+def label(text="", role=None, wrap=False):
+    w = QLabel(text)
+    if role:
+        w.setObjectName(role)
+    w.setWordWrap(wrap)
+    return w
+
+
+def separator():
+    f = QFrame()
+    f.setObjectName("sep")
+    return f
 
 
 def open_path(path):
@@ -65,6 +148,7 @@ def show_in_folder(path, folder):
 class Worker(QObject):
     """Runs a function in a background thread and hands the result back to the UI thread."""
     finished = Signal(object, object)
+    progress = Signal(object, object)
 
     def run(self, fn, *args):
         def target():
@@ -90,11 +174,20 @@ def folder_row(parent, folder):
     return row, edit
 
 
+def target_folder(main, chosen, category):
+    """IDM-style auto folders: if the user kept the default folder, sort into a category sub-folder."""
+    base = main.settings["download_dir"]
+    if main.settings.get("auto_folders", True) and os.path.normcase(os.path.abspath(chosen)) == \
+            os.path.normcase(os.path.abspath(base)):
+        return os.path.join(base, category)
+    return chosen
+
+
 # ---------------------------------------------------------------------------
 # Popups
 # ---------------------------------------------------------------------------
 class QualityDialog(QDialog):
-    """IDM-style popup: shows the qualities a video really has and lets you pick one."""
+    """IDM-style popup: qualities the video really has, subtitles, whole-playlist download."""
 
     def __init__(self, main, page_url, referer=None, direct=None, title=""):
         super().__init__(None)
@@ -102,65 +195,141 @@ class QualityDialog(QDialog):
         self.page_url = page_url
         self.referer = referer
         self.direct = direct
+        self.info = None
+        self.playlist = None
+        self.is_list = video.is_playlist_url(page_url)
+        self.is_single = (not self.is_list) or video.is_single_video_url(page_url)
+        self._pending = 0
         self.setWindowTitle("Download video - FastDownloader")
         self.setWindowIcon(main.windowIcon())
         self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
         self.setAttribute(Qt.WA_DeleteOnClose)
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
 
         lay = QVBoxLayout(self)
-        head = QLabel("Download this video")
-        head.setStyleSheet("font-size:17px; font-weight:700; color:#5b3fe0;")
-        lay.addWidget(head)
-        self.title_lbl = QLabel(title or page_url)
-        self.title_lbl.setWordWrap(True)
-        self.title_lbl.setStyleSheet("font-size:13px; font-weight:600; color:#222;")
+        lay.addWidget(label("Download this video" if self.is_single else "Download playlist", "heading"))
+        self.title_lbl = label(title or page_url, "title", wrap=True)
         lay.addWidget(self.title_lbl)
-        self.status = QLabel("Finding available qualities…")
-        self.status.setStyleSheet("color:#666;")
+        self.status = label("Finding available qualities…" if self.is_single else "Reading the playlist…",
+                            "muted", wrap=True)
         lay.addWidget(self.status)
+
+        # playlist switch (shown when the link belongs to a playlist)
+        self.pl_check = QCheckBox()
+        self.pl_check.setVisible(False)
+        self.pl_check.toggled.connect(self._render)
+        lay.addWidget(self.pl_check)
 
         self.box = QGridLayout()
         self.box.setSpacing(6)
         lay.addLayout(self.box)
 
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color:#dde1ea;")
-        lay.addWidget(line)
+        # subtitles
+        srow = QHBoxLayout()
+        self.sub_check = QCheckBox("Subtitles:")
+        self.sub_combo = QComboBox()
+        self.sub_combo.setMinimumWidth(220)
+        self.sub_combo.setEnabled(False)
+        self.sub_check.toggled.connect(self.sub_combo.setEnabled)
+        srow.addWidget(self.sub_check)
+        srow.addWidget(self.sub_combo, 1)
+        self.sub_wrap = QWidget()
+        self.sub_wrap.setLayout(srow)
+        srow.setContentsMargins(0, 0, 0, 0)
+        self.sub_wrap.setVisible(False)
+        lay.addWidget(self.sub_wrap)
+
+        lay.addWidget(separator())
         row, self.folder = folder_row(self, main.settings["download_dir"])
-        lay.addWidget(QLabel("Save to:"))
+        lay.addWidget(label("Save to:"))
         lay.addLayout(row)
+        b = QHBoxLayout()
+        self.later = QCheckBox("Download later (Scheduler)")
+        b.addWidget(self.later)
+        b.addStretch(1)
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.close)
-        b = QHBoxLayout()
-        b.addStretch(1)
         b.addWidget(cancel)
         lay.addLayout(b)
 
-        self.worker = Worker()
-        self.worker.finished.connect(self._got_info)
-        self.worker.run(video.probe, page_url, referer)
+        if self.is_single:
+            self._pending += 1
+            self.w1 = Worker()
+            self.w1.finished.connect(self._got_info)
+            self.w1.run(video.probe, page_url, referer)
+        if self.is_list:
+            self._pending += 1
+            self.w2 = Worker()
+            self.w2.finished.connect(self._got_playlist)
+            self.w2.run(video.probe_playlist, page_url)
         QTimer.singleShot(0, self._fit)
 
+    # ---- results ---------------------------------------------------------
     def _got_info(self, info, err):
-        if err is not None:
-            msg = str(err).replace("ERROR: ", "")
+        try:
+            self._pending -= 1
+            if err is None:
+                self.info = info
+                self.title_lbl.setText(info["title"])
+            else:
+                self.err = err
+            self._render()
+        except RuntimeError:
+            pass   # popup was closed
+
+    def _got_playlist(self, pl, err):
+        try:
+            self._pending -= 1
+            if err is None:
+                self.playlist = pl
+                self.pl_check.setText(f"Download the whole playlist:  {pl['title']}  ({len(pl['entries'])} videos)")
+                self.pl_check.blockSignals(True)
+                self.pl_check.setChecked(not self.is_single or self.info is None)
+                self.pl_check.blockSignals(False)
+                self.pl_check.setVisible(True)
+            self._render()
+        except RuntimeError:
+            pass
+
+    def _playlist_mode(self):
+        return self.playlist is not None and (self.pl_check.isChecked() or self.info is None)
+
+    def _render(self):
+        while self.box.count():
+            w = self.box.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        if self._playlist_mode():
+            self.title_lbl.setText(self.playlist["title"])
+            set_role(self.status, "muted")
+            self.status.setText(f"{len(self.playlist['entries'])} videos · choose a quality for all of them:")
+            opts = [{"label": f"Up to {lbl}", "tag": f"{h}p", "format_spec": f"bv*[height<={h}]+ba/b[height<={h}]/b",
+                     "size": None, "audio_only": False} for h, lbl in video.PLAYLIST_QUALITIES]
+            opts.append({"label": "Audio only (MP3)", "tag": "mp3", "format_spec": "ba/b", "size": None,
+                         "audio_only": True})
+            self._buttons(opts)
+            self._fill_subs([(c, n, False) for c, n in SUB_LANGS], note="when available")
+        elif self.info is not None:
+            self.title_lbl.setText(self.info["title"])
+            set_role(self.status, "muted")
+            self.status.setText("Choose a quality:")
+            self._buttons(self.info["options"])
+            self._fill_subs(self.info.get("subs") or [])
+        elif self._pending == 0:
+            err = getattr(self, "err", None)
+            msg = str(err).replace("ERROR: ", "") if err else "No video found on this page"
             self.status.setText("Could not read this video:\n" + msg[:300])
-            self.status.setWordWrap(True)
-            self.status.setStyleSheet("color:#b3261e;")
+            set_role(self.status, "error")
             if self.direct:
                 btn = QPushButton("Download the video file directly")
                 btn.setObjectName("quality")
                 btn.clicked.connect(self._direct)
                 self.box.addWidget(btn, 0, 0, 1, 2)
-            self._fit()
-            return
-        self.title_lbl.setText(info["title"])
-        self.status.setText("Choose a quality:")
-        self.info = info
-        vids = [o for o in info["options"] if not o["audio_only"]]
-        auds = [o for o in info["options"] if o["audio_only"]]
+        self._fit()
+
+    def _buttons(self, options):
+        vids = [o for o in options if not o["audio_only"]]
+        auds = [o for o in options if o["audio_only"]]
         for i, opt in enumerate(vids + auds):
             size = f"   ~{human_size(opt['size'])}" if opt.get("size") else ""
             icon = "🎵 " if opt["audio_only"] else "🎬 "
@@ -172,25 +341,46 @@ class QualityDialog(QDialog):
                 self.box.addWidget(btn, (len(vids) + 1) // 2, 0, 1, 2)
             else:
                 self.box.addWidget(btn, i // 2, i % 2)
-        self._fit()
+
+    def _fill_subs(self, subs, note=""):
+        self.sub_combo.clear()
+        for code, name, _auto in subs:
+            self.sub_combo.addItem(f"{name}" + (f"  ({note})" if note else ""), code)
+        en = self.sub_combo.findData("en")
+        if en >= 0:
+            self.sub_combo.setCurrentIndex(en)
+        self.sub_wrap.setVisible(bool(subs))
 
     def _fit(self):
         """Resize to content and keep the whole popup on screen."""
-        self.adjustSize()
-        scr = (self.screen() or QApplication.primaryScreen()).availableGeometry()
-        g = self.frameGeometry()
-        g.moveCenter(scr.center())
-        self.move(max(scr.left(), g.left()), max(scr.top(), g.top()))
+        try:
+            self.adjustSize()
+            scr = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+            g = self.frameGeometry()
+            g.moveCenter(scr.center())
+            self.move(max(scr.left(), g.left()), max(scr.top(), g.top()))
+        except RuntimeError:
+            pass
 
+    # ---- start -----------------------------------------------------------
     def _choose(self, opt):
-        folder = self.folder.text().strip() or self.main.settings["download_dir"]
+        chosen = self.folder.text().strip() or self.main.settings["download_dir"]
+        folder = target_folder(self.main, chosen, "Music" if opt["audio_only"] else "Videos")
         headers = {"Referer": self.referer} if self.referer else {}
-        task = engine.VideoTask(
-            url=self.info["url"], folder=folder, format_spec=opt["format_spec"], label=opt["tag"],
-            audio_only=opt["audio_only"], title=self.info["title"], expected_total=opt.get("size"),
-            headers=headers,
-        )
-        self.main.add_task(task)
+        subs = [self.sub_combo.currentData()] if self.sub_check.isChecked() and self.sub_combo.count() else []
+        if self._playlist_mode():
+            folder = os.path.join(folder, engine.safe_name(self.playlist["title"]))
+            tasks = [engine.VideoTask(url=e["url"], folder=folder, format_spec=opt["format_spec"],
+                                      label=opt["tag"], audio_only=opt["audio_only"],
+                                      title=e["title"] or f"Video {i + 1}", headers=headers,
+                                      subs=[] if opt["audio_only"] else subs)
+                     for i, e in enumerate(self.playlist["entries"])]
+        else:
+            tasks = [engine.VideoTask(
+                url=self.info["url"], folder=folder, format_spec=opt["format_spec"], label=opt["tag"],
+                audio_only=opt["audio_only"], title=self.info["title"], expected_total=opt.get("size"),
+                headers=headers, subs=[] if opt["audio_only"] else subs)]
+        self.main.add_tasks(tasks, later=self.later.isChecked())
         self.close()
 
     def _direct(self):
@@ -212,31 +402,33 @@ class FileDialog(QDialog):
         self.setWindowIcon(main.windowIcon())
         self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
         self.setAttribute(Qt.WA_DeleteOnClose)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(540)
 
         lay = QVBoxLayout(self)
-        head = QLabel("Download file")
-        head.setStyleSheet("font-size:17px; font-weight:700; color:#5b3fe0;")
-        lay.addWidget(head)
+        lay.addWidget(label("Download file", "heading"))
         form = QFormLayout()
-        url_lbl = QLabel(url if len(url) < 90 else url[:87] + "…")
+        url_lbl = label(url if len(url) < 90 else url[:87] + "…", "muted")
         url_lbl.setToolTip(url)
         url_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         form.addRow("Address:", url_lbl)
         self.name = QLineEdit(filename or "")
         self.name.setPlaceholderText("checking…")
         form.addRow("File name:", self.name)
-        self.size = QLabel("checking…")
+        self.size = label("checking…", "muted")
         form.addRow("Size:", self.size)
         row, self.folder = folder_row(self, main.settings["download_dir"])
         form.addRow("Save to:", row)
         lay.addLayout(form)
 
         b = QHBoxLayout()
+        later = QPushButton("Download later")
+        later.setToolTip("Add to the Scheduler – it starts at your scheduled time")
+        later.clicked.connect(lambda: self._start(later=True))
+        b.addWidget(later)
         b.addStretch(1)
         self.start_btn = QPushButton("Start download")
         self.start_btn.setObjectName("primary")
-        self.start_btn.clicked.connect(self._start)
+        self.start_btn.clicked.connect(lambda: self._start(later=False))
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.close)
         b.addWidget(self.start_btn)
@@ -251,32 +443,36 @@ class FileDialog(QDialog):
             self.worker.run(engine.probe, url, self.headers)
 
     def _got_info(self, info, err):
-        if err is not None:
-            self.size.setText("unknown (" + str(err)[:120] + ")")
+        try:
+            if err is not None:
+                self.size.setText("unknown (" + str(err)[:120] + ")")
+                if not self.name.text():
+                    self.name.setText(engine.safe_name(os.path.basename(self.url.split("?")[0])) or "download")
+                return
+            self.info = info
             if not self.name.text():
-                self.name.setText(engine.safe_name(os.path.basename(self.url.split("?")[0])) or "download")
-            return
-        self.info = info
-        if not self.name.text():
-            self.name.setText(info["filename"])
-        txt = human_size(info["total"]) or "unknown"
-        if info["resumable"]:
-            txt += "   ·   resume supported, fast multi-part download"
-        else:
-            txt += "   ·   server does not allow resume (single connection)"
-        self.size.setText(txt)
+                self.name.setText(info["filename"])
+            txt = human_size(info["total"]) or "unknown"
+            if info["resumable"]:
+                txt += "   ·   resume supported, fast multi-part download"
+            else:
+                txt += "   ·   server does not allow resume (single connection)"
+            self.size.setText(txt)
+        except RuntimeError:
+            pass
 
-    def _start(self):
-        folder = self.folder.text().strip() or self.main.settings["download_dir"]
-        os.makedirs(folder, exist_ok=True)
+    def _start(self, later=False):
         name = engine.safe_name(self.name.text().strip() or "download")
+        chosen = self.folder.text().strip() or self.main.settings["download_dir"]
+        folder = target_folder(self.main, chosen, engine.category_for(name))
+        os.makedirs(folder, exist_ok=True)
         name = os.path.basename(engine.unique_path(folder, name))
         task = engine.HttpTask(url=self.url, folder=folder, filename=name, headers=self.headers,
                                connections=self.main.settings["connections"])
         if self.info:
             task.apply_probe(self.info)
             task.filename = name
-        self.main.add_task(task)
+        self.main.add_tasks([task], later=later)
         self.close()
 
 
@@ -284,9 +480,9 @@ class AddUrlDialog(QDialog):
     def __init__(self, main):
         super().__init__(main)
         self.setWindowTitle("Add download")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(540)
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("Paste a link (file, YouTube or other video page):"))
+        lay.addWidget(label("Paste a link – a file, a video page, or a whole playlist / channel:"))
         self.edit = QLineEdit()
         clip = QApplication.clipboard().text().strip()
         if clip.startswith(("http://", "https://")) and " " not in clip:
@@ -307,7 +503,7 @@ class AddUrlDialog(QDialog):
 def qr_pixmap(text, size=200):
     """Draw a QR code for `text` (no image files needed)."""
     import qrcode
-    from PySide6.QtGui import QColor, QPainter, QPixmap
+    from PySide6.QtGui import QPainter, QPixmap
     qr = qrcode.QRCode(border=2, error_correction=qrcode.constants.ERROR_CORRECT_M)
     qr.add_data(text)
     qr.make(fit=True)
@@ -335,46 +531,37 @@ class SupportDialog(QDialog):
         self.setWindowTitle("Support FastDownloader")
         self.setMinimumWidth(500)
         lay = QVBoxLayout(self)
-        head = QLabel("🎉  Enjoying FastDownloader?" if thanks else "❤  Support FastDownloader")
-        head.setStyleSheet("font-size:17px; font-weight:700; color:#5b3fe0;")
-        lay.addWidget(head)
-        msg = QLabel(("You've finished several downloads with FastDownloader. " if thanks else "")
-                     + "FastDownloader is free. If it saves you time, a small contribution "
-                     "helps keep it updated. Thank you!")
-        msg.setWordWrap(True)
-        lay.addWidget(msg)
+        lay.addWidget(label("🎉  Enjoying FastDownloader?" if thanks else "❤  Support FastDownloader", "heading"))
+        lay.addWidget(label(("You've finished several downloads with FastDownloader. " if thanks else "")
+                            + "FastDownloader is free. If it saves you time, a small contribution "
+                            "helps keep it updated. Thank you!", wrap=True))
 
         pp = QPushButton("Donate with PayPal")
         pp.setObjectName("donate")
         pp.setCursor(Qt.PointingHandCursor)
         pp.clicked.connect(lambda: webbrowser.open(config.PAYPAL_URL))
         lay.addWidget(pp)
+        lay.addWidget(separator())
 
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color:#dde1ea;")
-        lay.addWidget(line)
-
-        lay.addWidget(QLabel("<b>Or send USDT (crypto)</b>"))
+        lay.addWidget(label("<b>Or send USDT (crypto)</b>"))
         row = QHBoxLayout()
         qr = QLabel()
         qr.setPixmap(qr_pixmap(config.USDT_ADDRESS, 170))
         row.addWidget(qr)
         info = QVBoxLayout()
-        info.addWidget(QLabel("Coin: <b>USDT</b>"))
-        nets = "".join(f"• <b>{n}</b><br><span style='color:#666'>{d}</span><br>"
+        info.addWidget(label("Coin: <b>USDT</b>"))
+        nets = "".join(f"• <b>{n}</b><br><span style='color:{P['muted']}'>{d}</span><br>"
                        for n, d in config.USDT_NETWORKS)
-        nl = QLabel("Network (use one of these):<br>" + nets)
+        nl = label("Network (use one of these):<br>" + nets)
         nl.setTextFormat(Qt.RichText)
         info.addWidget(nl)
-        warn = QLabel("Send only USDT, only on the networks above.\nOther coins or networks will be lost.")
-        warn.setStyleSheet("color:#b3261e; font-size:12px;")
-        info.addWidget(warn)
+        info.addWidget(label("Send only USDT, only on the networks above.\nOther coins or networks will be lost.",
+                             "error"))
         info.addStretch(1)
         row.addLayout(info, 1)
         lay.addLayout(row)
 
-        lay.addWidget(QLabel("Address:"))
+        lay.addWidget(label("Address:"))
         arow = QHBoxLayout()
         addr = QLineEdit(config.USDT_ADDRESS)
         addr.setReadOnly(True)
@@ -383,6 +570,7 @@ class SupportDialog(QDialog):
         copy.setObjectName("primary")
 
         def do_copy():
+            main._last_clip = config.USDT_ADDRESS
             QApplication.clipboard().setText(config.USDT_ADDRESS)
             copy.setText("Copied ✓")
             QTimer.singleShot(2000, lambda: copy.setText("Copy"))
@@ -406,21 +594,37 @@ class SettingsDialog(QDialog):
     def __init__(self, main):
         super().__init__(main)
         self.main = main
+        s = main.settings
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(560)
         lay = QFormLayout(self)
-        row, self.folder = folder_row(self, main.settings["download_dir"])
+        row, self.folder = folder_row(self, s["download_dir"])
         lay.addRow("Download folder:", row)
+        self.auto_folders = QCheckBox("Sort into folders: Videos, Music, Programs, Compressed, Documents, Pictures")
+        self.auto_folders.setChecked(s.get("auto_folders", True))
+        lay.addRow("", self.auto_folders)
         self.conn = QSpinBox()
         self.conn.setRange(1, 32)
-        self.conn.setValue(main.settings["connections"])
+        self.conn.setValue(s["connections"])
         lay.addRow("Connections per file:", self.conn)
+        self.par = QSpinBox()
+        self.par.setRange(1, 20)
+        self.par.setValue(s.get("max_parallel", 3))
+        lay.addRow("Max downloads at once:", self.par)
+        self.theme = QComboBox()
+        for txt, val in (("Same as Windows", "system"), ("Light", "light"), ("Dark", "dark")):
+            self.theme.addItem(txt, val)
+        self.theme.setCurrentIndex(max(0, self.theme.findData(s.get("theme", "system"))))
+        lay.addRow("Theme:", self.theme)
         self.autostart = QCheckBox("Start FastDownloader when Windows starts (needed for the browser button)")
-        self.autostart.setChecked(main.settings.get("start_with_windows", False))
+        self.autostart.setChecked(s.get("start_with_windows", False))
         lay.addRow(self.autostart)
         self.clip = QCheckBox("When I copy a video link (YouTube, TikTok, Facebook …), show the quality picker")
-        self.clip.setChecked(main.settings.get("watch_clipboard", True))
+        self.clip.setChecked(s.get("watch_clipboard", True))
         lay.addRow(self.clip)
+        self.upd = QCheckBox("Check for updates automatically")
+        self.upd.setChecked(s.get("check_updates", True))
+        lay.addRow(self.upd)
         b = QHBoxLayout()
         b.addStretch(1)
         ok = QPushButton("Save")
@@ -428,6 +632,142 @@ class SettingsDialog(QDialog):
         ok.clicked.connect(self.accept)
         b.addWidget(ok)
         lay.addRow(b)
+
+
+class SchedulerDialog(QDialog):
+    AFTER = (("Do nothing", "nothing"), ("Sleep", "sleep"), ("Shut down the PC", "shutdown"),
+             ("Close FastDownloader", "quit"))
+
+    def __init__(self, main):
+        super().__init__(main)
+        s = main.settings
+        self.setWindowTitle("Scheduler")
+        self.setMinimumWidth(480)
+        lay = QVBoxLayout(self)
+        lay.addWidget(label("⏰  Scheduler", "heading"))
+        n = sum(1 for t in main.tasks if t.status == "scheduled")
+        lay.addWidget(label(f"Downloads you add with “Download later” wait here ({n} waiting now). "
+                            "Great for cheaper night-time internet bundles.", "muted", wrap=True))
+        form = QFormLayout()
+        self.start_on = QCheckBox("Start scheduled downloads at")
+        self.start_on.setChecked(s.get("sched_start_on", False))
+        self.start_t = QTimeEdit(QTime.fromString(s.get("sched_start", "02:00"), "HH:mm"))
+        self.start_t.setDisplayFormat("HH:mm")
+        form.addRow(self.start_on, self.start_t)
+        self.stop_on = QCheckBox("Pause all downloads at")
+        self.stop_on.setChecked(s.get("sched_stop_on", False))
+        self.stop_t = QTimeEdit(QTime.fromString(s.get("sched_stop", "07:00"), "HH:mm"))
+        self.stop_t.setDisplayFormat("HH:mm")
+        form.addRow(self.stop_on, self.stop_t)
+        self.after = QComboBox()
+        for txt, val in self.AFTER:
+            self.after.addItem(txt, val)
+        self.after.setCurrentIndex(max(0, self.after.findData(s.get("after_done", "nothing"))))
+        form.addRow("When all downloads finish:", self.after)
+        lay.addLayout(form)
+        lay.addWidget(label("“Sleep” and “Shut down” give you 60 seconds to cancel. They happen once, "
+                            "then switch back to “Do nothing”.", "muted", wrap=True))
+        b = QHBoxLayout()
+        start_now = QPushButton(f"Start the {n} waiting now")
+        start_now.setEnabled(n > 0)
+        start_now.clicked.connect(lambda: (main.start_scheduled(), self.accept()))
+        b.addWidget(start_now)
+        b.addStretch(1)
+        ok = QPushButton("Save")
+        ok.setObjectName("primary")
+        ok.clicked.connect(self.accept)
+        b.addWidget(ok)
+        lay.addLayout(b)
+
+
+class UpdateDialog(QDialog):
+    def __init__(self, main, upd):
+        super().__init__(main)
+        self.main = main
+        self.upd = upd
+        self.setWindowTitle("Update available")
+        self.setMinimumSize(520, 420)
+        lay = QVBoxLayout(self)
+        lay.addWidget(label(f"✨  FastDownloader {upd['version']} is available", "heading"))
+        lay.addWidget(label(f"You have version {config.VERSION}. What's new:", "muted"))
+        notes = QTextBrowser()
+        notes.setOpenExternalLinks(True)
+        notes.setMarkdown(upd["notes"] or "Improvements and fixes.")
+        lay.addWidget(notes, 1)
+        b = QHBoxLayout()
+        skip = QPushButton("Skip this version")
+        skip.clicked.connect(self._skip)
+        b.addWidget(skip)
+        b.addStretch(1)
+        later = QPushButton("Later")
+        later.clicked.connect(self.reject)
+        now = QPushButton("Update now")
+        now.setObjectName("primary")
+        now.clicked.connect(self._update)
+        b.addWidget(later)
+        b.addWidget(now)
+        lay.addLayout(b)
+
+    def _skip(self):
+        self.main.settings["skip_version"] = self.upd["version"]
+        config.save_settings(self.main.settings)
+        self.reject()
+
+    def _update(self):
+        if not (updater.is_installed() and self.upd.get("setup_url")):
+            webbrowser.open(self.upd["page"])     # portable version -> download page
+            self.accept()
+            return
+        prog = QProgressDialog("Downloading the update…", "Cancel", 0, 100, self)
+        prog.setWindowTitle("Updating FastDownloader")
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+        prog.setValue(0)
+        w = Worker()
+        self._w = w
+        w.progress.connect(lambda d, t: prog.setValue(int(100 * d / t)) if t else None)
+        cancelled = {"v": False}
+        prog.canceled.connect(lambda: cancelled.__setitem__("v", True))
+
+        def done(path, err):
+            prog.close()
+            if err is not None:
+                if not cancelled["v"]:
+                    QMessageBox.warning(self, "Update", f"The update could not be downloaded:\n{err}")
+                return
+            # run the installer silently; it reopens FastDownloader when finished
+            subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/relaunch=1"])
+            self.accept()
+            self.main.quit_app()
+        w.finished.connect(done)
+        w.run(lambda: updater.download(self.upd["setup_url"], lambda d, t: w.progress.emit(d, t),
+                                       lambda: cancelled["v"]))
+
+
+class Countdown(QMessageBox):
+    """'Shutting down in 60 s – Cancel' box."""
+
+    def __init__(self, main, what, action, seconds=60):
+        super().__init__(main)
+        self.what, self.action, self.left = what, action, seconds
+        self.setWindowTitle("FastDownloader")
+        self.setIcon(QMessageBox.Information)
+        self.setStandardButtons(QMessageBox.Cancel)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.t = QTimer(self)
+        self.t.timeout.connect(self._tick)
+        self._tick()
+        self.t.start(1000)
+        self.finished.connect(lambda _: self.t.stop())
+
+    def _tick(self):
+        if self.left <= 0:
+            self.t.stop()
+            self.done(0)
+            self.action()
+            return
+        self.setText(f"All downloads are finished.\n{self.what} in {self.left} seconds.")
+        self.left -= 1
 
 
 # ---------------------------------------------------------------------------
@@ -443,11 +783,13 @@ class MainWindow(QMainWindow):
         self.tasks = []
         self.popups = []
         self._was_active = {}
+        self._had_activity = False
+        self._tick_n = 0
         self.setWindowTitle(f"{config.APP_NAME} {config.VERSION}")
         icon_file = config.resource_path("assets", "app.ico")
         self.setWindowIcon(QIcon(icon_file) if os.path.exists(icon_file)
                            else self.style().standardIcon(QStyle.SP_ArrowDown))
-        self.resize(980, 520)
+        self.resize(1100, 540)
 
         tb = QToolBar()
         tb.setMovable(False)
@@ -461,20 +803,16 @@ class MainWindow(QMainWindow):
             tb.addAction(a)
             return a
         act("Add URL", QStyle.SP_FileDialogNewFolder, self.add_url)
-        act("Resume", QStyle.SP_MediaPlay, lambda: [t.start() for t in self.selected()])
-        act("Pause", QStyle.SP_MediaPause, lambda: [t.pause() for t in self.selected()])
+        act("Resume", QStyle.SP_MediaPlay, lambda: [self.request_start(t) for t in self.selected()])
+        act("Pause", QStyle.SP_MediaPause, lambda: [self.pause_task(t) for t in self.selected()])
         act("Delete", QStyle.SP_TrashIcon, self.delete_selected)
         tb.addSeparator()
         act("Resume all", QStyle.SP_MediaSeekForward, self.resume_all)
-        act("Pause all", QStyle.SP_MediaStop, lambda: [t.pause() for t in self.tasks])
+        act("Pause all", QStyle.SP_MediaStop, lambda: [self.pause_task(t) for t in self.tasks])
         tb.addSeparator()
+        act("Scheduler", QStyle.SP_FileDialogInfoView, self.open_scheduler)
         act("Open folder", QStyle.SP_DirOpenIcon, lambda: os.startfile(self._ensure_dir()))
         act("Settings", QStyle.SP_FileDialogDetailedView, self.open_settings)
-        # Support button lives in the bottom-right corner so it always fits, even on small screens
-        donate = QPushButton("❤  Support (PayPal / USDT)")
-        donate.setObjectName("donate")
-        donate.setCursor(Qt.PointingHandCursor)
-        donate.clicked.connect(lambda: self.open_support())
 
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
@@ -482,7 +820,6 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(False)
-        self.table.setAlternatingRowColors(False)
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(0, QHeaderView.Stretch)
         for i, w in ((1, 90), (2, 170), (3, 100), (4, 90), (5, 110)):
@@ -492,15 +829,37 @@ class MainWindow(QMainWindow):
         self.table.customContextMenuRequested.connect(self.row_menu)
         self.table.cellDoubleClicked.connect(self.double_click)
         self.setCentralWidget(self.table)
-        self.statusBar().addPermanentWidget(donate)
-        self.statusBar().setStyleSheet("QStatusBar { padding: 4px 8px; }")
-        self.statusBar().showMessage("Ready")
+
+        # status bar: speed limit + update notice + support
+        sb = self.statusBar()
+        sb.addPermanentWidget(QLabel("Speed limit:"))
+        self.speed = QComboBox()
+        for txt, val in SPEEDS:
+            self.speed.addItem(txt, val)
+        cur = self.speed.findData(self.settings.get("speed_limit", 0))
+        self.speed.setCurrentIndex(cur if cur >= 0 else 0)
+        self.speed.currentIndexChanged.connect(self._speed_changed)
+        engine.LIMITER.set_rate(self.speed.currentData())
+        sb.addPermanentWidget(self.speed)
+        self.update_btn = QPushButton("")
+        self.update_btn.setObjectName("update")
+        self.update_btn.setVisible(False)
+        self.update_btn.clicked.connect(lambda: self._show_update(self._update_info))
+        sb.addPermanentWidget(self.update_btn)
+        donate = QPushButton("❤  Support (PayPal / USDT)")
+        donate.setObjectName("donate")
+        donate.setCursor(Qt.PointingHandCursor)
+        donate.clicked.connect(lambda: self.open_support())
+        sb.addPermanentWidget(donate)
+        sb.showMessage("Ready")
 
         # tray icon so the app keeps running for the browser extension
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
         menu = QMenu()
         menu.addAction("Show FastDownloader", self.show_window)
         menu.addAction("Add URL", self.add_url)
+        menu.addAction("Scheduler", lambda: (self.show_window(), self.open_scheduler()))
+        menu.addAction("Check for updates", lambda: self.check_updates(silent=False))
         menu.addAction("Support (PayPal / USDT)", lambda: (self.show_window(), self.open_support()))
         menu.addSeparator()
         menu.addAction("Quit", self.quit_app)
@@ -518,6 +877,7 @@ class MainWindow(QMainWindow):
         self._clip_worker = Worker()
         self._clip_worker.finished.connect(self._clip_checked)
         QApplication.clipboard().dataChanged.connect(self.on_clipboard)
+
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(500)
@@ -525,7 +885,17 @@ class MainWindow(QMainWindow):
         self.save_timer.timeout.connect(self.save_tasks)
         self.save_timer.start(5000)
 
-    # ---- tasks --------------------------------------------------------
+        # updates: shortly after start, then every 12 hours
+        self._update_info = None
+        self._upd_worker = Worker()
+        self._upd_worker.finished.connect(self._update_checked)
+        self._upd_silent = True
+        QTimer.singleShot(15000, lambda: self.check_updates(silent=True))
+        self.upd_timer = QTimer(self)
+        self.upd_timer.timeout.connect(lambda: self.check_updates(silent=True))
+        self.upd_timer.start(12 * 3600 * 1000)
+
+    # ---- tasks / queue ------------------------------------------------
     def _ensure_dir(self):
         os.makedirs(self.settings["download_dir"], exist_ok=True)
         return self.settings["download_dir"]
@@ -538,7 +908,7 @@ class MainWindow(QMainWindow):
                     if t:
                         self._append_row(t)
                         if t.was_active and t.status != "done":
-                            t.start()   # it was downloading when the app closed -> continue
+                            self.request_start(t)   # it was downloading when the app closed -> continue
         except FileNotFoundError:
             pass
         except Exception as e:  # noqa: BLE001
@@ -563,15 +933,67 @@ class MainWindow(QMainWindow):
         self.table.setCellWidget(r, 2, bar)
         self.table.setRowHeight(r, 30)
 
-    def add_task(self, task):
-        self._append_row(task)
-        task.start()
+    def _active_count(self):
+        return sum(1 for t in self.tasks if t.active)
+
+    def request_start(self, t):
+        """Start now if there's room in the queue, otherwise wait as 'Queued'."""
+        if t.active or t.status == "done":
+            return
+        if self._active_count() < self.settings.get("max_parallel", 3):
+            t.start()
+        else:
+            t.status = "queued"
+
+    def _pump_queue(self):
+        free = self.settings.get("max_parallel", 3) - self._active_count()
+        for t in self.tasks:
+            if free <= 0:
+                break
+            if t.status == "queued" and not t.active:
+                t.start()
+                free -= 1
+
+    def pause_task(self, t):
+        if t.active:
+            t.pause()
+        elif t.status in ("queued", "scheduled"):
+            t.status = "paused"
+
+    def add_tasks(self, tasks, later=False):
+        for t in tasks:
+            self._append_row(t)
+            if later:
+                t.status = "scheduled"
+            else:
+                self.request_start(t)
         self.save_tasks()
-        self.statusBar().showMessage(f"Started: {task.filename or task.url}", 5000)
+        if later:
+            s = self.settings
+            when = f"starts at {s.get('sched_start', '02:00')}" if s.get("sched_start_on") else \
+                "set a start time in Scheduler"
+            self.statusBar().showMessage(f"Added {len(tasks)} to the Scheduler – {when}", 8000)
+        else:
+            self.statusBar().showMessage(
+                f"Started: {tasks[0].filename or tasks[0].url}" if len(tasks) == 1 else
+                f"Added {len(tasks)} downloads (max {self.settings.get('max_parallel', 3)} at once)", 6000)
         # bring the list forward so the progress is visible (like IDM's progress window)
         self.show_window()
         self.table.selectRow(len(self.tasks) - 1)
         self.table.scrollToBottom()
+
+    def add_task(self, task):
+        self.add_tasks([task])
+
+    def start_scheduled(self):
+        n = 0
+        for t in self.tasks:
+            if t.status == "scheduled":
+                t.status = "queued"
+                n += 1
+        if n:
+            self.tray.showMessage("Scheduler", f"Starting {n} scheduled download(s)", QSystemTrayIcon.Information, 4000)
+        self._pump_queue()
 
     def selected(self):
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
@@ -579,8 +1001,8 @@ class MainWindow(QMainWindow):
 
     def resume_all(self):
         for t in self.tasks:
-            if t.status in ("paused", "error", "queued"):
-                t.start()
+            if t.status in ("paused", "error"):
+                self.request_start(t)
 
     def delete_selected(self, with_file=False):
         tasks = self.selected()
@@ -603,35 +1025,46 @@ class MainWindow(QMainWindow):
         self.save_tasks()
 
     def refresh(self):
-        any_active = False
+        self._pump_queue()
+        self._tick_n += 1
+        if self._tick_n % 10 == 0:
+            self._check_schedule()
+        text_brush = QBrush(QColor(P["text"]))
         for r, t in enumerate(self.tasks):
             t.tick()
             active = t.active
-            any_active |= active
+            if active:
+                self._had_activity = True
             name = t.filename or t.url
             self.table.item(r, 0).setText(name)
-            self.table.item(r, 0).setToolTip(f"{name}\n{t.url}")
+            tip = f"{name}\n{t.url}\nFolder: {t.folder}"
+            if getattr(t, "sub_note", ""):
+                tip += f"\n{t.sub_note}"
+            self.table.item(r, 0).setToolTip(tip)
             self.table.item(r, 1).setText(human_size(t.total))
             bar = self.table.cellWidget(r, 2)
             if t.total:
-                bar.setRange(0, 1000)
                 bar.setValue(int(1000 * min(1.0, t.done / t.total)))
                 bar.setFormat(f"{100 * min(1.0, t.done / t.total):.1f}%")
             elif t.status == "done":
-                bar.setRange(0, 1000)
                 bar.setValue(1000)
                 bar.setFormat("100%")
             else:
-                bar.setRange(0, 1000)
                 bar.setValue(0)
                 bar.setFormat(human_size(t.done) or "")
             self.table.item(r, 3).setText(f"{human_size(t.speed)}/s" if t.speed > 1 and active else "")
             self.table.item(r, 4).setText(human_time(t.eta) if active else "")
-            st = STATUS_TEXT.get(t.status, t.status)
             item = self.table.item(r, 5)
-            item.setText(st)
+            item.setText(STATUS_TEXT.get(t.status, t.status))
             item.setToolTip(t.error or "")
-            item.setForeground(Qt.red if t.status == "error" else (Qt.darkGreen if t.status == "done" else Qt.black))
+            if t.status == "error":
+                item.setForeground(QBrush(QColor(P["error"])))
+            elif t.status == "done":
+                item.setForeground(QBrush(QColor(P["ok"])))
+            elif t.status in ("queued", "scheduled", "paused"):
+                item.setForeground(QBrush(QColor(P["muted"])))
+            else:
+                item.setForeground(text_brush)
             was = self._was_active.get(t.id)
             if was and not active:
                 if t.status == "done":
@@ -641,12 +1074,101 @@ class MainWindow(QMainWindow):
                     self.tray.showMessage("Download failed", f"{t.filename}\n{t.error}", QSystemTrayIcon.Warning, 6000)
                 self.save_tasks()
             self._was_active[t.id] = active
-        total_speed = sum(t.speed for t in self.tasks if t.active)
-        n = sum(1 for t in self.tasks if t.active)
+        n = self._active_count()
+        q = sum(1 for t in self.tasks if t.status == "queued")
         if n:
-            self.statusBar().showMessage(f"{n} downloading  ·  {human_size(total_speed) or '0 B'}/s")
-        elif any_active is False and self.statusBar().currentMessage().endswith("/s"):
-            self.statusBar().showMessage("Ready")
+            total_speed = sum(t.speed for t in self.tasks if t.active)
+            extra = f"  ·  {q} queued" if q else ""
+            self.statusBar().showMessage(f"{n} downloading  ·  {human_size(total_speed) or '0 B'}/s{extra}")
+        else:
+            if self.statusBar().currentMessage().endswith(("/s", "queued")):
+                self.statusBar().showMessage("Ready")
+            if q == 0:
+                self._maybe_after_done()
+
+    # ---- scheduler / after-done -------------------------------------------
+    def _check_schedule(self):
+        s = self.settings
+        now = QTime.currentTime().toString("HH:mm")
+        today = time.strftime("%Y-%m-%d")
+        if s.get("sched_start_on") and now == s.get("sched_start") and s.get("_fired_start") != today:
+            s["_fired_start"] = today
+            config.save_settings(s)
+            self.start_scheduled()
+        if s.get("sched_stop_on") and now == s.get("sched_stop") and s.get("_fired_stop") != today:
+            s["_fired_stop"] = today
+            config.save_settings(s)
+            stopping = [t for t in self.tasks if t.active or t.status == "queued"]
+            for t in stopping:
+                self.pause_task(t)
+            # they continue at the next scheduled start time
+            QTimer.singleShot(4000, lambda: [setattr(t, "status", "scheduled") for t in stopping
+                                             if not t.active and t.status == "paused"])
+            if stopping:
+                self.tray.showMessage("Scheduler", f"Paused {len(stopping)} download(s) until the next start time",
+                                      QSystemTrayIcon.Information, 4000)
+
+    def _maybe_after_done(self):
+        action = self.settings.get("after_done", "nothing")
+        if action == "nothing" or not self._had_activity:
+            return
+        self._had_activity = False
+        self.settings["after_done"] = "nothing"      # one-shot, like IDM
+        config.save_settings(self.settings)
+        self.save_tasks()
+        if action == "quit":
+            QTimer.singleShot(1500, self.quit_app)
+            return
+        what = {"sleep": "The PC will go to sleep", "shutdown": "The PC will shut down"}[action]
+
+        def do_it():
+            if action == "shutdown":
+                subprocess.Popen(["shutdown", "/s", "/t", "0"])
+            else:
+                subprocess.Popen(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"])
+        self.show_window()
+        box = Countdown(self, what, do_it)
+        box.show()
+        self._countdown = box
+
+    # ---- updates -------------------------------------------------------
+    def check_updates(self, silent=True):
+        if silent and not self.settings.get("check_updates", True):
+            return
+        self._upd_silent = silent
+        self._upd_worker.run(updater.check)
+
+    def _update_checked(self, upd, err):
+        if err is not None:
+            if not self._upd_silent:
+                QMessageBox.warning(self, "Updates", f"Could not check for updates:\n{err}")
+            return
+        if upd is None:
+            if not self._upd_silent:
+                QMessageBox.information(self, "Updates", f"You have the latest version ({config.VERSION}).")
+            return
+        self._update_info = upd
+        self.update_btn.setText(f"⬆  Update to {upd['version']}")
+        self.update_btn.setVisible(True)
+        if self._upd_silent and upd["version"] == self.settings.get("skip_version"):
+            return
+        if self._upd_silent:
+            self.tray.showMessage("Update available", f"FastDownloader {upd['version']} is ready – click "
+                                  "“Update” at the bottom of the window.", QSystemTrayIcon.Information, 6000)
+        else:
+            self._show_update(upd)
+
+    def _show_update(self, upd):
+        if upd:
+            self.show_window()
+            UpdateDialog(self, upd).exec()
+
+    # ---- misc ----------------------------------------------------------
+    def _speed_changed(self):
+        val = self.speed.currentData()
+        engine.LIMITER.set_rate(val)
+        self.settings["speed_limit"] = val
+        config.save_settings(self.settings)
 
     def on_clipboard(self):
         if not self.settings.get("watch_clipboard", True):
@@ -694,8 +1216,12 @@ class MainWindow(QMainWindow):
             m.addAction("Open file", lambda: open_path(t.path))
         m.addAction("Show in folder", lambda: show_in_folder(t.path, t.folder))
         m.addSeparator()
-        m.addAction("Resume", lambda: [x.start() for x in tasks])
-        m.addAction("Pause", lambda: [x.pause() for x in tasks])
+        m.addAction("Resume", lambda: [self.request_start(x) for x in tasks])
+        m.addAction("Start now (skip the queue)", lambda: [x.start() for x in tasks if not x.active])
+        m.addAction("Pause", lambda: [self.pause_task(x) for x in tasks])
+        m.addAction("Download later (Scheduler)",
+                    lambda: [setattr(x, "status", "scheduled") for x in tasks
+                             if not x.active and x.status != "done"])
         m.addAction("Copy link", lambda: (setattr(self, "_last_clip", t.url), QApplication.clipboard().setText(t.url)))
         if t.status == "error" and t.error:
             m.addAction("Show error", lambda: QMessageBox.warning(self, "Error", t.error))
@@ -709,7 +1235,7 @@ class MainWindow(QMainWindow):
         if t.status == "done":
             open_path(t.path)
         elif not t.active:
-            t.start()
+            self.request_start(t)
 
     def add_url(self):
         self.show_window()
@@ -720,7 +1246,7 @@ class MainWindow(QMainWindow):
         if not url.startswith(("http://", "https://")):
             QMessageBox.warning(self, "Add download", "Please paste a link that starts with http:// or https://")
             return
-        if video.is_video_site(url):
+        if video.is_playlist_url(url) or video.is_video_site(url):
             self.open_video_dialog(url)
         else:
             self.open_file_dialog(url)
@@ -755,12 +1281,33 @@ class MainWindow(QMainWindow):
         d = SettingsDialog(self)
         if d.exec() != QDialog.Accepted:
             return
-        self.settings["download_dir"] = d.folder.text().strip() or config.DEFAULTS["download_dir"]
-        self.settings["connections"] = d.conn.value()
-        self.settings["start_with_windows"] = d.autostart.isChecked()
-        self.settings["watch_clipboard"] = d.clip.isChecked()
-        config.save_settings(self.settings)
-        set_autostart(self.settings["start_with_windows"])
+        s = self.settings
+        s["download_dir"] = d.folder.text().strip() or config.DEFAULTS["download_dir"]
+        s["auto_folders"] = d.auto_folders.isChecked()
+        s["connections"] = d.conn.value()
+        s["max_parallel"] = d.par.value()
+        s["theme"] = d.theme.currentData()
+        s["start_with_windows"] = d.autostart.isChecked()
+        s["watch_clipboard"] = d.clip.isChecked()
+        s["check_updates"] = d.upd.isChecked()
+        config.save_settings(s)
+        set_autostart(s["start_with_windows"])
+        apply_theme(QApplication.instance(), s["theme"])
+
+    def open_scheduler(self):
+        d = SchedulerDialog(self)
+        if d.exec() != QDialog.Accepted:
+            return
+        s = self.settings
+        s["sched_start_on"] = d.start_on.isChecked()
+        s["sched_start"] = d.start_t.time().toString("HH:mm")
+        s["sched_stop_on"] = d.stop_on.isChecked()
+        s["sched_stop"] = d.stop_t.time().toString("HH:mm")
+        s["after_done"] = d.after.currentData()
+        s.pop("_fired_start", None)
+        s.pop("_fired_stop", None)
+        config.save_settings(s)
+        self.statusBar().showMessage("Scheduler saved", 4000)
 
     # ---- window / tray ------------------------------------------------
     def show_window(self):
@@ -821,8 +1368,8 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(config.APP_NAME)
     app.setQuitOnLastWindowClosed(False)
-    app.setStyleSheet(STYLE)
     app.setFont(QFont("Segoe UI", 10))
+    apply_theme(app, config.load_settings().get("theme", "system"))
 
     br = bridge.Bridge()
     try:

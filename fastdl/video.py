@@ -153,4 +153,74 @@ def probe(url, referer=None):
         options.append({"label": "Audio only (MP3)", "tag": "mp3", "format_spec": "ba/b",
                         "size": best_audio or None, "audio_only": True})
     return {"title": info.get("title") or "video", "url": info.get("webpage_url") or url,
-            "duration": info.get("duration"), "options": options}
+            "duration": info.get("duration"), "options": options, "subs": _subtitle_choices(info)}
+
+
+def _subtitle_choices(info):
+    """[(code, name, auto)] - real subtitles first, then auto-generated ones in the video's language/English."""
+    out, seen = [], set()
+    for code, tracks in (info.get("subtitles") or {}).items():
+        if code == "live_chat" or code in seen:
+            continue
+        name = next((t.get("name") for t in tracks if t.get("name")), code)
+        out.append((code, name, False))
+        seen.add(code)
+    auto = info.get("automatic_captions") or {}
+    for code in [c for c in auto if c.endswith("-orig")] + ["en"]:
+        if code in auto and code not in seen:
+            tracks = auto[code]
+            name = next((t.get("name") for t in tracks if t.get("name")), code)
+            out.append((code, f"{name} (auto-generated)", True))
+            seen.add(code)
+    return out[:40]
+
+
+# ---- playlists / channels ------------------------------------------------------
+PLAYLIST_QUALITIES = [(2160, "4K (2160p)"), (1440, "2K (1440p)"), (1080, "1080p"), (720, "720p"),
+                      (480, "480p"), (360, "360p")]
+
+
+def is_playlist_url(url):
+    import re
+    import urllib.parse
+    u = urllib.parse.urlparse(url)
+    q = urllib.parse.parse_qs(u.query)
+    if "list" in q and not q["list"][0].startswith(("RD", "UL")):   # skip YouTube auto-mixes
+        return True
+    return bool(re.search(r"/playlist|/(@[^/]+|channel/[^/]+|c/[^/]+|user/[^/]+)(/videos|/shorts|/streams)?/?$", u.path))
+
+
+def is_single_video_url(url):
+    import urllib.parse
+    u = urllib.parse.urlparse(url)
+    return "v" in urllib.parse.parse_qs(u.query) or "youtu.be" in u.netloc or "/shorts/" in u.path
+
+
+def probe_playlist(url, limit=500):
+    """Fast list of the videos in a playlist/channel (titles + links), without reading each video."""
+    import re
+    from yt_dlp import YoutubeDL
+    target = url
+    if re.search(r"youtube\.com/(@[^/]+|channel/[^/]+|c/[^/]+|user/[^/]+)/?$", url):
+        target = url.rstrip("/") + "/videos"
+    if "list=" in url and "/watch" in url:          # watch?v=..&list=..  -> the playlist itself
+        import urllib.parse
+        lid = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["list"][0]
+        target = f"https://www.youtube.com/playlist?list={lid}"
+    opts = base_opts()
+    opts.update({"extract_flat": "in_playlist", "noplaylist": False, "skip_download": True,
+                 "playlistend": limit})
+    with YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(target, download=False)
+    entries = []
+    for e in info.get("entries") or []:
+        if not e:
+            continue
+        link = e.get("url") or e.get("webpage_url") or ""
+        if link and not link.startswith("http") and e.get("ie_key") == "Youtube":
+            link = f"https://www.youtube.com/watch?v={link}"
+        if link.startswith("http"):
+            entries.append({"url": link, "title": e.get("title") or ""})
+    if not entries:
+        raise ValueError("No videos found in this playlist")
+    return {"title": info.get("title") or "Playlist", "entries": entries, "url": target}

@@ -4,7 +4,8 @@ import os
 import sys
 
 APP_NAME = "FastDownloader"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
+GITHUB_REPO = "Kagzwhizzy/FastDownloader"
 
 # Local port the Chrome extension talks to (127.0.0.1 only, never the internet).
 PORT = 47321
@@ -39,6 +40,15 @@ DEFAULTS = {
     "download_dir": os.path.join(os.path.expanduser("~"), "Downloads", APP_NAME),
     "connections": 8,
     "start_with_windows": False,
+    "max_parallel": 3,          # downloads running at the same time (rest wait in the queue)
+    "speed_limit": 0,           # bytes/second for all downloads together, 0 = unlimited
+    "auto_folders": True,       # Videos / Music / Programs / Compressed / Documents / Pictures / Other
+    "theme": "system",          # system / light / dark
+    "check_updates": True,
+    "skip_version": "",
+    "sched_start_on": False, "sched_start": "02:00",
+    "sched_stop_on": False, "sched_stop": "07:00",
+    "after_done": "nothing",    # nothing / sleep / shutdown / quit
 }
 
 
