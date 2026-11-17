@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="brand">
+      <img src="icon48.png" alt="" class="logo">
+      <div>
+        <div class="name">FastDownloader</div>
+        <div class="tag">Fast downloads · any video quality</div>
+      </div>
+    </div>
+    <div class="pill" id="status"><span class="dot"></span><span id="statusText">Checking…</span></div>
+  </header>
+
+  <main>
+    <div class="offline" id="offline" hidden>
+      <svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+      <div><b>App is not running.</b><br>Open <i>FastDownloader</i> on your PC to download.</div>
+    </div>
+
+    <button class="cta" id="vid">
+      <svg viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+      <span>
+        <b>Download video on this page</b>
+        <small>Pick 4K · 1080p · 720p · 480p · MP3</small>
+      </span>
+    </button>
+    <div class="toast" id="toast"></div>
+
+    <label class="row">
+      <span class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span>
+      <span class="txt"><b>Catch browser downloads</b><small>Send every file to FastDownloader</small></span>
+      <span class="switch"><input type="checkbox" id="ic"><i></i></span>
+    </label>
+
+    <section class="support">
+      <div class="sh">
+        <span class="heart"><svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-9.6-9.3C.9 8.3 3 4.5 6.7 4.5c2.1 0 3.6 1.1 5.3 3 1.7-1.9 3.2-3 5.3-3 3.7 0 5.8 3.8 4.3 7.2C19.5 16.4 12 21 12 21z"/></svg></span>
+        <div><b>Support FastDownloader</b><small>Free forever – tips keep it updated</small></div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="pp">PayPal</button>
+        <button class="tab" data-tab="usdt">USDT (crypto)</button>
+      </div>
+
+      <div class="pane" id="pane-pp">
+        <button class="paypal" id="paypal">
+          <svg viewBox="0 0 24 24"><path d="M7 21l1.5-9h4.2c3.6 0 5.8-1.7 6.3-5 .4-2.6-1.3-4-4.4-4H8.2L5 21h2z"/></svg>
+          Donate with PayPal
+        </button>
+        <div class="amounts">
+          <span>Any amount helps</span>
+        </div>
+      </div>
+
+      <div class="pane" id="pane-usdt" hidden>
+        <div class="nets">
+          <button class="net active" data-net="bep20">BEP20 <em>low fee</em></button>
+          <button class="net" data-net="erc20">ERC20</button>
+        </div>
+        <div class="netinfo" id="netinfo">Network: <b>BNB Smart Chain (BEP20)</b></div>
+        <div class="addr">
+          <code id="addr"></code>
+          <button id="copy" title="Copy address">
+            <svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>
+            <span>Copy</span>
+          </button>
+        </div>
+        <details class="qr">
+          <summary>Show QR code</summary>
+          <img src="usdt_qr.png" alt="USDT address QR code">
+        </details>
+        <p class="warn">Send only <b>USDT</b> on <b>BEP20</b> or <b>ERC20</b>. Other coins/networks are lost.</p>
+      </div>
+    </section>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

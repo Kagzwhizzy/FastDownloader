@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "FastDownloader Integration",
+  "version": "1.2.0",
+  "description": "Fast downloads and one-click video downloads (4K, 1080p, 720p, MP3) with FastDownloader.",
+  "icons": { "16": "icon16.png", "32": "icon32.png", "48": "icon48.png", "128": "icon128.png" },
+  "action": { "default_popup": "popup.html", "default_title": "FastDownloader",
+              "default_icon": { "16": "icon16.png", "32": "icon32.png", "48": "icon48.png" } },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["downloads", "contextMenus", "storage", "cookies", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
+}
